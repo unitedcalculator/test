@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: clocker-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DB: clocker
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - clocker-network
+
+  # Express Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: clocker-backend
+    ports:
+      - "5000:5000"
+    environment:
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/clocker?authSource=admin
+      PORT: 5000
+      JWT_SECRET: your_jwt_secret_key_change_this
+      FRONTEND_URL: http://localhost:5173
+      NODE_ENV: development
+    depends_on:
+      - mongodb
+    networks:
+      - clocker-network
+    command: npm run dev
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: clocker-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:5000/api
+    depends_on:
+      - backend
+    networks:
+      - clocker-network
+    stdin_open: true
+    tty: true
+
+volumes:
+  mongo_data:
+
+networks:
+  clocker-network:
+    driver: bridge
