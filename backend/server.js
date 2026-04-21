@@ -1,34 +1,3 @@
-/**
- * CLOAKING SYSTEM - EDUCATIONAL PURPOSE ONLY
- * 
- * WARNING: This is an experimental educational system demonstrating cloaking concepts.
- * 
- * IMPORTANT LEGAL/ETHICAL NOTES:
- * - Search engine cloaking violates most search engine guidelines (Google, Bing, etc.)
- * - Using cloaking for SEO manipulation can result in:
- *   * De-indexing from search results
- *   * Permanent domain bans
- *   * Legal issues in some jurisdictions
- * - This system is ONLY for educational and testing purposes
- * - Do NOT use in production for real-world SEO manipulation
- * 
- * WHAT THIS SYSTEM DOES:
- * - Detects requests from bots (via User-Agent and IP)
- * - Serves different content to bots vs regular users
- * - Logs all requests and click data
- * - Provides an admin dashboard for management
- * 
- * SETUP INSTRUCTIONS:
- * 1. Install MongoDB (local or cloud)
- * 2. Run: npm install (in both backend and frontend folders)
- * 3. Create .env file in backend folder with:
- *    MONGODB_URI=mongodb://localhost:27017/clocker
- *    PORT=5000
- *    JWT_SECRET=your_jwt_secret_key_change_this
- *    FRONTEND_URL=http://localhost:5173
- * 4. Start backend: npm run dev
- * 5. Start frontend: npm run dev
- */
 
 import 'dotenv/config';
 import express from 'express';
@@ -48,32 +17,55 @@ const PORT = process.env.PORT || 5000;
 connectDB();
 
 // Middleware
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  'http://localhost:5173',  // Allow local dev
-  'http://localhost:3000',  // Allow alternative local dev
-];
+function parseAllowedOrigins(envValue) {
+  return (envValue || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or server-to-server requests)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        // In development, allow all. In production, be strict.
-        if (process.env.NODE_ENV === 'development') {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      }
-    },
-    credentials: true,
-  })
-);
+function isAllowedOrigin(origin) {
+  if (!origin) return true; // non-browser / same-origin / server-to-server
+
+  const explicit = new Set([
+    ...parseAllowedOrigins(process.env.ALLOWED_ORIGINS),
+    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+    'http://localhost:5173',
+    'http://localhost:3000',
+  ]);
+
+  if (explicit.has(origin)) return true;
+
+  // Optional: allow any Vercel preview/prod domain when running on Vercel
+  // (Set ALLOW_VERCEL_ORIGINS=true if you want this behavior.)
+  if (String(process.env.ALLOW_VERCEL_ORIGINS).toLowerCase() === 'true') {
+    try {
+      const { protocol, hostname } = new URL(origin);
+      if (protocol === 'https:' && hostname.endsWith('.vercel.app')) return true;
+    } catch {
+      // ignore malformed origins
+    }
+  }
+
+  // In development, allow all origins to reduce friction.
+  if (process.env.NODE_ENV === 'development') return true;
+
+  return false;
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -109,17 +101,13 @@ app.use((req, res) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
+  if (err && err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ error: 'CORS blocked for this origin' });
+  }
   res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start server
-app.listen(PORT, () => {
-  // console.log('===================================');
-  // console.log('EDUCATIONAL CLOAKING SYSTEM');
-  // console.log('===================================');
-  console.log(`Server running on http://localhost:${PORT}`);
-  // console.log('');
-  // console.log('WARNING: This is for educational purposes only.');
-  // console.log('Do NOT use in production for SEO manipulation.');
-  // console.log('===================================');
+app.listen(PORT, () => { 
+  console.log(`Server running on http://localhost:${PORT}`); 
 });
