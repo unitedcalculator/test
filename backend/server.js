@@ -38,7 +38,12 @@ function isAllowedOrigin(origin) {
 
   // Optional: allow any Vercel preview/prod domain when running on Vercel
   // (Set ALLOW_VERCEL_ORIGINS=true if you want this behavior.)
-  if (String(process.env.ALLOW_VERCEL_ORIGINS).toLowerCase() === 'true') {
+  // If deployed on Vercel, default to allowing *.vercel.app unless explicitly disabled.
+  const allowVercelOrigins =
+    String(process.env.ALLOW_VERCEL_ORIGINS).toLowerCase() === 'true' ||
+    (process.env.VERCEL && String(process.env.ALLOW_VERCEL_ORIGINS).toLowerCase() !== 'false');
+
+  if (allowVercelOrigins) {
     try {
       const { protocol, hostname } = new URL(origin);
       if (protocol === 'https:' && hostname.endsWith('.vercel.app')) return true;
