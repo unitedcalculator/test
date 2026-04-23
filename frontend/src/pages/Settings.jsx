@@ -1,18 +1,28 @@
-import { useState, useEffect } from 'react';
-import { settingsAPI } from '../services/api';
+import { useState, useEffect, useRef } from 'react';
+import { domainsAPI, settingsAPI } from '../services/api';
 
 function Settings() {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [customDomain, setCustomDomain] = useState('');
   const [botUserAgents, setBotUserAgents] = useState('');
   const [botIPs, setBotIPs] = useState('');
-  const [verifyingDomain, setVerifyingDomain] = useState(false);
+  const [domains, setDomains] = useState([]);
+  const [domainInput, setDomainInput] = useState('');
+  const [addingDomain, setAddingDomain] = useState(false);
+  const [pollingDomain, setPollingDomain] = useState(null);
+  const pollRef = useRef({ timer: null, startedAt: null, domain: null });
 
   useEffect(() => {
     fetchSettings();
+    fetchDomains();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current.timer) clearInterval(pollRef.current.timer);
+    };
   }, []);
 
   const fetchSettings = async () => {
@@ -20,7 +30,6 @@ function Settings() {
       setLoading(true);
       const res = await settingsAPI.getSettings();
       setSettings(res.data);
-      setCustomDomain(res.data.customDomain || '');
       setBotUserAgents(res.data.botUserAgents.join('\n'));
       setBotIPs(res.data.botIPs.join('\n'));
     } catch (err) {
@@ -28,6 +37,89 @@ function Settings() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const normalizeDomain = (value) => {
+    let d = (value || '').trim();
+    d = d.replace(/^https?:\/\//, '');
+    d = d.replace(/\/.*$/, '');
+    d = d.replace(/\.$/, '');
+    return d.toLowerCase();
+  };
+
+  const fetchDomains = async () => {
+    try {
+      const res = await domainsAPI.list();
+      setDomains(res.data || []);
+    } catch (err) {
+      // Don't block settings page if domain endpoints are unavailable yet
+      console.error('Failed to load domains:', err);
+    }
+  };
+
+  const startPolling = (domain) => {
+    const d = normalizeDomain(domain);
+    if (!d) return;
+
+    // clear any existing poll
+    if (pollRef.current.timer) clearInterval(pollRef.current.timer);
+
+    pollRef.current = { timer: null, startedAt: Date.now(), domain: d };
+    setPollingDomain(d);
+
+    const run = async () => {
+      const elapsed = Date.now() - pollRef.current.startedAt;
+      const maxMs = 10 * 60 * 1000; // 10 minutes
+      if (elapsed > maxMs) {
+        if (pollRef.current.timer) clearInterval(pollRef.current.timer);
+        pollRef.current.timer = null;
+        setPollingDomain(null);
+        return;
+      }
+
+      try {
+        await domainsAPI.poll(d);
+      } catch (err) {
+        // keep polling; DNS can fail intermittently
+      } finally {
+        fetchDomains();
+      }
+    };
+
+    // run immediately, then every 30s
+    run();
+    pollRef.current.timer = setInterval(run, 30000);
+  };
+
+  const stopPolling = () => {
+    if (pollRef.current.timer) clearInterval(pollRef.current.timer);
+    pollRef.current = { timer: null, startedAt: null, domain: null };
+    setPollingDomain(null);
+  };
+
+  const handleAddDomain = async () => {
+    const d = normalizeDomain(domainInput);
+    if (!d) {
+      setError('Please enter a domain');
+      return;
+    }
+
+    setAddingDomain(true);
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      const res = await domainsAPI.add(d);
+      setSuccessMessage(res.data?.message || 'Domain added');
+      setDomainInput('');
+      await fetchDomains();
+      // auto-poll if not verified yet
+      if (!res.data?.verified) startPolling(d);
+    } catch (err) {
+      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to add domain');
+    } finally {
+      setAddingDomain(false);
     }
   };
 
@@ -49,7 +141,6 @@ function Settings() {
       const botIPList = botIPs.split('\n').filter(s => s.trim());
 
       const res = await settingsAPI.updateSettings({
-        customDomain: customDomain.trim(),
         botUserAgents: botAgents,
         botIPs: botIPList,
         ipWhitelist: settings.ipWhitelist,
@@ -61,51 +152,6 @@ function Settings() {
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update settings');
-    }
-  };
-
-  const handleVerifyDomain = async () => {
-    if (!customDomain.trim()) {
-      setError('Please enter a domain first');
-      return;
-    }
-
-    setVerifyingDomain(true);
-    setError('');
-    try {
-      // Extract domain from URL if it has protocol
-      let domainToVerify = customDomain.trim();
-      if (domainToVerify.startsWith('https://')) {
-        domainToVerify = domainToVerify.replace('https://', '');
-      } else if (domainToVerify.startsWith('http://')) {
-        domainToVerify = domainToVerify.replace('http://', '');
-      }
-      // Remove trailing slash if present
-      domainToVerify = domainToVerify.replace(/\/$/, '');
-
-      const res = await settingsAPI.verifyDomain(domainToVerify);
-      setSettings(prev => ({
-        ...prev,
-        domainVerificationStatus: res.data.domainVerificationStatus,
-        domainVerifiedAt: res.data.domainVerifiedAt,
-      }));
-      setSuccessMessage('Domain verified successfully! ✓');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      const errorData = err.response?.data;
-      setSettings(prev => ({
-        ...prev,
-        domainVerificationStatus: errorData?.domainVerificationStatus || 'failed',
-      }));
-      
-      // Show detailed error with instructions
-      if (errorData?.instructions) {
-        setError(errorData.instructions);
-      } else {
-        setError(errorData?.error || 'Failed to verify domain');
-      }
-    } finally {
-      setVerifyingDomain(false);
     }
   };
 
@@ -143,95 +189,85 @@ function Settings() {
         </button>
       </div>
 
-      {/* Custom Domain Settings */}
+      {/* Domain Management (Nameserver verification) */}
       <div className="card mb-8">
-        <h3 className="card-header">Custom Domain for Cloaking Links</h3>
-        <form onSubmit={async (e) => {
-          e.preventDefault();
-          try {
-            const res = await settingsAPI.updateSettings({
-              customDomain: customDomain.trim(),
-              botUserAgents: settings.botUserAgents,
-              botIPs: settings.botIPs,
-              ipWhitelist: settings.ipWhitelist,
-              ipBlacklist: settings.ipBlacklist,
-            });
-            setSettings(res.data.settings);
-            setSuccessMessage('Custom domain updated successfully');
-            setTimeout(() => setSuccessMessage(''), 3000);
-          } catch (err) {
-            setError(err.response?.data?.error || 'Failed to update domain');
-          }
-        }} className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-gray-700 font-medium">Custom Domain</label>
-              {settings?.domainVerificationStatus && (
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                  settings.domainVerificationStatus === 'verified' 
-                    ? 'bg-green-100 text-green-800' 
-                    : settings.domainVerificationStatus === 'failed'
-                    ? 'bg-red-100 text-red-800'
-                    : 'bg-yellow-100 text-yellow-800'
-                }`}>
-                  {settings.domainVerificationStatus === 'verified' && '✓ Verified'}
-                  {settings.domainVerificationStatus === 'failed' && '✗ Failed'}
-                  {settings.domainVerificationStatus === 'pending' && '⏳ Pending'}
-                </span>
-              )}
+        <h3 className="card-header">Domain Management (Nameserver Verification)</h3>
+        <p className="text-gray-600 mb-4 text-sm">
+          Add your domain, then set its nameservers to the ones shown. We’ll auto-check every 30 seconds for up to 10 minutes.
+        </p>
+
+        <div className="flex flex-col md:flex-row gap-3 mb-4">
+          <input
+            type="text"
+            value={domainInput}
+            onChange={(e) => setDomainInput(e.target.value)}
+            className="input-field flex-1"
+            placeholder="clientdomain.com"
+          />
+          <button
+            type="button"
+            onClick={handleAddDomain}
+            className="btn-primary"
+            disabled={addingDomain || !domainInput.trim()}
+          >
+            {addingDomain ? 'Adding...' : 'Add Domain'}
+          </button>
+        </div>
+
+        {pollingDomain && (
+          <div className="mb-4 flex items-center justify-between bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">
+            <div className="text-yellow-800">
+              Auto-checking <span className="font-mono">{pollingDomain}</span> every 30s (max 10 min)…
             </div>
-            <input
-              type="text"
-              value={customDomain}
-              onChange={(e) => setCustomDomain(e.target.value)}
-              className="input-field"
-              placeholder="yourdomain.com or links.yourdomain.com"
-              required
-            />
-            <small className="text-gray-500 block mt-2">
-              Enter your domain <strong>without https://</strong>. Example: <code className="bg-gray-100 px-1">yourdomain.com</code> or <code className="bg-gray-100 px-1">links.yourdomain.com</code>
-              <br/><br/>
-              Your cloaking links will be accessible at: <code className="bg-gray-100 px-1">{(customDomain.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'yourdomain.com')}/go/slug</code>
-            </small>
-          </div>
-
-          <div className="flex gap-3">
-            <button type="submit" className="btn-primary flex-1">
-              Save Domain
-            </button>
-            <button
-              type="button"
-              onClick={handleVerifyDomain}
-              disabled={verifyingDomain || !customDomain.trim()}
-              className={`flex-1 px-4 py-2 rounded font-medium transition ${
-                verifyingDomain || !customDomain.trim()
-                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-            >
-              {verifyingDomain ? '⏳ Verifying...' : '✓ Verify Domain'}
+            <button type="button" onClick={stopPolling} className="btn-secondary text-xs px-3 py-1">
+              Stop
             </button>
           </div>
+        )}
 
-          {settings?.domainVerificationStatus === 'failed' && (
-            <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">
-              <strong>❌ Domain verification failed.</strong>
-              <p className="mt-2 mb-3">Please add a TXT verification record to your domain registrar (GoDaddy, Namecheap, etc.):</p>
-              <div className="bg-white p-3 rounded border border-red-300 font-mono text-xs mb-3">
-                <div><strong>Name/Host:</strong> {customDomain.replace(/^https?:\/\//, '').replace(/\/$/, '')}</div>
-                <div><strong>Type:</strong> TXT</div>
-                <div><strong>Value:</strong> clk-verify-{localStorage.getItem('userId')}</div>
+        {domains.length === 0 ? (
+          <div className="text-gray-500 text-sm">No domains added yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {domains.map((d) => (
+              <div key={d.id} className="border rounded p-3 bg-white">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold text-gray-800">{d.domain_name}</div>
+                  <div
+                    className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                      d.verified ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                    }`}
+                  >
+                    {d.verified ? '✅ Verified' : '⏳ Pending'}
+                  </div>
+                </div>
+
+                <div className="mt-2 text-sm text-gray-700">
+                  <div className="font-medium mb-1">Expected nameservers</div>
+                  <div className="font-mono text-xs">
+                    {(d.nameservers_expected || []).length ? (d.nameservers_expected || []).join(', ') : 'Not configured on server'
+                    }
+                  </div>
+                </div>
+
+                <div className="mt-2 text-sm text-gray-700">
+                  <div className="font-medium mb-1">Current nameservers</div>
+                  <div className="font-mono text-xs">
+                    {(d.nameservers_current || []).length ? (d.nameservers_current || []).join(', ') : '—'}
+                  </div>
+                </div>
+
+                {!d.verified && (
+                  <div className="mt-3 flex gap-2">
+                    <button type="button" className="btn-primary text-xs px-3 py-2" onClick={() => startPolling(d.domain_name)}>
+                      Verify / Poll
+                    </button>
+                  </div>
+                )}
               </div>
-              <p className="text-xs">⏱️ After adding the TXT record, wait 5-10 minutes for DNS propagation, then click "Verify Domain" again.</p>
-            </div>
-          )}
-
-          {settings?.domainVerificationStatus === 'verified' && (
-            <div className="bg-green-50 border border-green-200 rounded p-3 text-sm text-green-700">
-              <strong>✓ Domain verified!</strong> Your cloaking links are now active on your custom domain.
-            </div>
-          )}
-        </form>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Bot Detection Rules */}

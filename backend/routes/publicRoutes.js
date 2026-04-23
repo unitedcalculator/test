@@ -2,6 +2,7 @@ import express from 'express';
 import Link from '../models/Link.js';
 import Log from '../models/Log.js';
 import Settings from '../models/Settings.js';
+import Domain from '../models/Domain.js';
 import { detectBotOrUser } from '../middleware/cloakingMiddleware.js';
 import puppeteer from 'puppeteer';
 
@@ -29,27 +30,42 @@ router.get('/:slug', detectBotOrUser, async (req, res) => {
     const { isBot, botName, cloakingEnabled } = req.cloaking;
     
     // Get the domain that was accessed (multi-domain support)
-    const accessedDomain = req.hostname;
+    const accessedDomain = String(req.hostname || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\.$/, '');
     console.log(`[MULTI-DOMAIN] Cloaking accessed from domain: ${accessedDomain}`);
 
-    // Step 1: Find which user owns this domain
+    // Step 1: Resolve which user owns this hostname (Domain table)
+    // Allow localhost/dev calls without a verified custom domain.
+    const appUrlHost = (() => {
+      try {
+        return process.env.APP_URL ? new URL(process.env.APP_URL).hostname.toLowerCase() : '';
+      } catch {
+        return '';
+      }
+    })();
+
+    const isLocalhost =
+      accessedDomain === 'localhost' ||
+      accessedDomain === '127.0.0.1' ||
+      accessedDomain.endsWith('.localhost');
+
     let userId = null;
-    const userSettings = await Settings.findOne({ customDomain: accessedDomain });
-    
-    if (userSettings) {
-      userId = userSettings.userId;
-      console.log(`[MULTI-DOMAIN] Domain ${accessedDomain} belongs to user ${userId}`);
-      
-      // Check if domain is verified
-      if (userSettings.domainVerificationStatus !== 'verified') {
+
+    if (!isLocalhost && accessedDomain && accessedDomain !== appUrlHost) {
+      const domainDoc = await Domain.findOne({ domainName: accessedDomain, verified: true });
+      if (!domainDoc) {
         return res.status(403).json({
           error: 'Domain not verified',
           educational: 'This is an educational cloaking system',
-          details: `Domain verification status: ${userSettings.domainVerificationStatus}. Please verify your domain in settings.`,
+          details: `Domain ${accessedDomain} is not verified. Please connect it by nameservers and wait for verification.`,
         });
       }
+      userId = domainDoc.userId;
+      console.log(`[MULTI-DOMAIN] Verified domain ${accessedDomain} belongs to user ${userId}`);
     } else {
-      console.log(`[MULTI-DOMAIN] No user found for domain ${accessedDomain} - falling back to slug-only lookup`);
+      console.log(`[MULTI-DOMAIN] Local/dev hostname detected (${accessedDomain})`);
     }
 
     // Step 2: Find the link (with userId if available, otherwise just slug)
@@ -126,8 +142,7 @@ router.get('/:slug', detectBotOrUser, async (req, res) => {
       } catch (error) {
         console.error(`[CLOAKING] Error fetching ${link.slug}:`, error.message);
         // Fallback to generated SEO HTML
-        return res.send(generateSeoHtml(link));
-        return res.send(generateSeoHtml(link));
+        return res.send(generateSeoHtml(link, accessedDomain));
       }
     }
 
@@ -146,7 +161,11 @@ router.get('/:slug', detectBotOrUser, async (req, res) => {
  * IMPORTANT: This is for educational purposes only.
  * Search engines can detect cloaking and may penalize your domain.
  */
-function generateSeoHtml(link) {
+function generateSeoHtml(link, accessedDomain) {
+  const ogUrl = accessedDomain
+    ? `https://${accessedDomain}/go/${link.slug}`
+    : `${process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173'}/go/${link.slug}`;
+
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -158,7 +177,7 @@ function generateSeoHtml(link) {
     <meta name="robots" content="index, follow">
     <meta property="og:title" content="${link.title}">
     <meta property="og:description" content="${link.description || link.title}">
-    <meta property="og:url" content="${process.env.FRONTEND_URL || 'http://localhost:5173'}/go/${link.slug}">
+    <meta property="og:url" content="${ogUrl}">
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
