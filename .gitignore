@@ -1,8 +1,6 @@
 node_modules/
 .DS_Store
 dist/
-.env
-.env.local
 .env.*.local
 *.log
 .vscode/
@@ -10,3 +8,4 @@ dist/
 *.swp
 *.swo
 *~
+config.bat

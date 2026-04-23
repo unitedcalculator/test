@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Trash2, Edit2, Copy, Plus } from 'lucide-react';
-import { linksAPI, settingsAPI } from '../services/api';
+import { domainsAPI, linksAPI } from '../services/api';
 
 function Links() {
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [customDomain, setCustomDomain] = useState('');
+  const [verifiedDomain, setVerifiedDomain] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingSlug, setEditingSlug] = useState(null);
   const [formData, setFormData] = useState({
@@ -18,17 +18,18 @@ function Links() {
   });
 
   useEffect(() => {
-    fetchSettings();
+    fetchVerifiedDomain();
     fetchLinks();
   }, []);
 
-  const fetchSettings = async () => {
+  const fetchVerifiedDomain = async () => {
     try {
-      const res = await settingsAPI.getSettings();
-      setCustomDomain(res.data.customDomain || '');
+      const res = await domainsAPI.list();
+      const list = res.data || [];
+      const firstVerified = list.find((d) => d.verified)?.domain_name;
+      setVerifiedDomain(firstVerified || '');
     } catch (err) {
-      console.error('Error fetching settings:', err);
-      // Continue without custom domain
+      // Continue without a verified domain
     }
   };
 
@@ -99,15 +100,15 @@ function Links() {
   };
 
   const handleCopyLink = (slug) => {
-    const baseUrl = customDomain || (import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000');
-    const url = `${baseUrl}/go/${slug}`;
+    const url = getCloakingUrl(slug);
     navigator.clipboard.writeText(url);
     alert(`Link copied: ${url}`);
   };
 
   const getCloakingUrl = (slug) => {
-    const baseUrl = customDomain || (import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000');
-    return `${baseUrl}/go/${slug}`;
+    if (verifiedDomain) return `https://${verifiedDomain}/go/${slug}`;
+    // fallback (local/dev)
+    return `${import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000'}/go/${slug}`;
   };
 
   if (loading) {
@@ -304,9 +305,9 @@ function Links() {
       <div className="mt-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
         <p className="text-yellow-800 text-sm mb-3">
           <strong>💾 Your Cloaking Links:</strong>
-          {customDomain && (
+          {verifiedDomain && (
             <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-              Using custom domain: {customDomain}
+              Using verified domain: {verifiedDomain}
             </span>
           )}
         </p>

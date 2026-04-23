@@ -63,12 +63,19 @@ export const logsAPI = {
   clearLogs: () => api.delete('/logs/clear'),
 };
 
+// Domains API
+export const domainsAPI = {
+  add: (domain) => api.post('/domains/add', { domain }),
+  list: () => api.get('/domains/list'),
+  verify: (domain) => api.get(`/domains/verify/${encodeURIComponent(domain)}`),
+  poll: (domain) => api.get(`/domains/poll/${encodeURIComponent(domain)}`),
+};
+
 // Settings API
 export const settingsAPI = {
   getSettings: () => api.get('/settings'),
   updateSettings: (data) => api.put('/settings', data),
   toggleCloaking: () => api.post('/settings/toggle'),
-  verifyDomain: (domain) => api.post('/settings/verify-domain', { domain }),
 };
 
 export default api;

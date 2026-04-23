@@ -9,6 +9,7 @@ import linkRoutes from './routes/linkRoutes.js';
 import logRoutes from './routes/logRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import domainsRoutes from './routes/domainsRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -89,6 +90,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/links', linkRoutes);
 app.use('/api/logs', logRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/domains', domainsRoutes);
 
 // Public cloaking route (no auth required)
 app.use('/go', publicRoutes);
